@@ -5,57 +5,195 @@
   <title>Card Creation Date Power-Up</title>
   <!-- Load Trello Power-Up Client Library -->
   <script src="https://p.trellocdn.com/power-up.min.js"></script>
+  <style>
+    /* basic Trello-like styles for the settings page */
+    body {
+      margin: 0;
+      padding: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #172b4d;
+      font-size: 14px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    select {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 12px;
+      border: 1px solid #DFE1E6;
+      border-radius: 3px;
+      background-color: #FAFBFC;
+      box-sizing: border-box;
+      outline: none;
+    }
+    select:focus {
+      border-color: #0079BF;
+    }
+    button {
+      background-color: #0079BF;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-weight: 500;
+      width: 100%;
+    }
+    button:hover {
+      background-color: #026AA7;
+    }
+  </style>
 </head>
 <body>
+
+  <!-- Settings View (Hidden by default, displayed only when ?page=settings is present) -->
+  <div id="settings-view" style="display: none;">
+    <label for="display-mode">Date Format Preference</label>
+    <select id="display-mode">
+      <option value="absolute">Absolute (e.g., Jan 15, 2024)</option>
+      <option value="relative">Relative (e.g., 3 days ago)</option>
+    </select>
+    <button id="save-btn">Save Preference</button>
+  </div>
+
   <script>
-    // Utility function: Convert Trello ID (MongoDB ObjectId) into a JS Date object
+    // Utility: Convert Trello Card ID to a Date
     function getCreationDateFromId(id) {
       const timestamp = parseInt(id.substring(0, 8), 16) * 1000;
       return new Date(timestamp);
     }
 
-    // Initialize the Trello Power-Up
-    window.TrelloPowerUp.initialize({
-      // 1. Badge on the front of the card (Board View)
-      'card-badges': function (t, options) {
-        return t.card('id').then(function (card) {
-          const date = getCreationDateFromId(card.id);
-          
-          // Format date for board view (e.g., "Jan 15")
-          const formattedDate = date.toLocaleDateString(undefined, {
-            month: 'short',
-            day: 'numeric'
-          });
+    // Utility: Calculate relative time string ("1 day ago", "2 weeks ago", etc.)
+    function getRelativeTimeString(date) {
+      const now = new Date();
+      const diffInSeconds = Math.floor((now - date) / 1000);
+      
+      if (diffInSeconds < 60) {
+        return 'just now';
+      }
+      
+      const units = [
+        { name: 'year', seconds: 31536000 },
+        { name: 'month', seconds: 2592000 },
+        { name: 'week', seconds: 604800 },
+        { name: 'day', seconds: 86400 },
+        { name: 'hour', seconds: 3600 },
+        { name: 'minute', seconds: 60 }
+      ];
+      
+      for (const unit of units) {
+        const count = Math.floor(diffInSeconds / unit.seconds);
+        if (count >= 1) {
+          const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'always' });
+          return rtf.format(-count, unit.name);
+        }
+      }
+      return 'just now';
+    }
 
-          return [{
-            text: 'Created: ' + formattedDate,
-            color: null // Options: 'blue', 'green', 'red', 'yellow', 'purple', etc., or null for neutral
-          }];
+    // Helper to format date based on settings
+    function formatCreationDate(date, mode, length) {
+      if (mode === 'relative') {
+        return getRelativeTimeString(date);
+      }
+      
+      if (length === 'short') {
+        return date.toLocaleDateString(undefined, {
+          month: 'short',
+          day: 'numeric'
         });
-      },
-
-      // 2. Badge on the inside of the card (Card Detail View)
-      'card-detail-badges': function (t, options) {
-        return t.card('id').then(function (card) {
-          const date = getCreationDateFromId(card.id);
-
-          // Format date and time for detail view (e.g., "Jan 15, 2024, 2:30 PM")
-          const formattedDate = date.toLocaleString(undefined, {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit'
-          });
-
-          return [{
-            title: 'Created Date',
-            text: formattedDate,
-            color: 'sky'
-          }];
+      } else {
+        return date.toLocaleString(undefined, {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit'
         });
       }
-    });
+    }
+
+    // Single-file routing mechanism
+    const urlParams = new URLSearchParams(window.location.search);
+    const isSettingsPage = urlParams.get('page') === 'settings';
+
+    if (isSettingsPage) {
+      // Show Settings page UI
+      document.getElementById('settings-view').style.display = 'block';
+
+      const t = window.TrelloPowerUp.iframe();
+      const select = document.getElementById('display-mode');
+      const saveBtn = document.getElementById('save-btn');
+
+      // Load user's private setting (default to 'absolute')
+      t.get('member', 'private', 'displayMode', 'absolute')
+        .then(function (savedValue) {
+          select.value = savedValue;
+        });
+
+      // Save user's preference and close popover
+      saveBtn.addEventListener('click', function () {
+        t.set('member', 'private', 'displayMode', select.value)
+          .then(function () {
+            t.closePopup();
+          });
+      });
+
+    } else {
+      // Run normal Power-up connector script
+      window.TrelloPowerUp.initialize({
+        
+        // Settings capability (triggers when clicking settings in Trello)
+        'show-settings': function (t, options) {
+          const settingsUrl = window.location.origin + window.location.pathname + '?page=settings';
+          return t.popup({
+            title: 'Display Settings',
+            url: settingsUrl,
+            height: 140
+          });
+        },
+
+        // Board view badge
+        'card-badges': function (t, options) {
+          return Promise.all([
+            t.card('id'),
+            t.get('member', 'private', 'displayMode', 'absolute')
+          ]).then(function (results) {
+            const card = results[0];
+            const displayMode = results[1];
+            const date = getCreationDateFromId(card.id);
+            const formatted = formatCreationDate(date, displayMode, 'short');
+
+            return [{
+              text: 'Created: ' + formatted,
+              color: null
+            }];
+          });
+        },
+
+        // Card details view badge
+        'card-detail-badges': function (t, options) {
+          return Promise.all([
+            t.card('id'),
+            t.get('member', 'private', 'displayMode', 'absolute')
+          ]).then(function (results) {
+            const card = results[0];
+            const displayMode = results[1];
+            const date = getCreationDateFromId(card.id);
+            const formatted = formatCreationDate(date, displayMode, 'long');
+
+            return [{
+              title: 'Created Date',
+              text: formatted,
+              color: 'sky'
+            }];
+          });
+        }
+      });
+    }
   </script>
 </body>
 </html>
